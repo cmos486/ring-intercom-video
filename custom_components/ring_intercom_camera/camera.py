@@ -69,32 +69,30 @@ async def async_setup_platform(
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
     """Set up Ring Intercom camera entities."""
-    if "ring" not in hass.data:
-        _LOGGER.warning("Ring integration not found")
-        return
-
-    ring_data = None
-    for entry_id, data in hass.data.get("ring", {}).items():
-        if hasattr(data, "devices_coordinator"):
-            ring_data = data
-            break
-
-    if not ring_data:
-        _LOGGER.warning("Could not find Ring integration data coordinator")
+    # Ring integration uses ConfigEntry.runtime_data (not hass.data["ring"])
+    ring_entries = hass.config_entries.async_entries("ring")
+    if not ring_entries:
+        _LOGGER.warning("Ring integration not configured")
         return
 
     entities = []
-    try:
-        devices = ring_data.devices_coordinator.ring_client.devices()
-        for device in devices.other:
-            if device.kind == "intercom_handset_video":
-                _LOGGER.info(
-                    "Found Ring Intercom Video: %s (id: %s)",
-                    device.name, device.device_api_id,
-                )
-                entities.append(RingIntercomCamera(device))
-    except Exception:
-        _LOGGER.exception("Error discovering Ring Intercom Video devices")
+    for entry in ring_entries:
+        ring_data = getattr(entry, "runtime_data", None)
+        if ring_data is None:
+            continue
+
+        try:
+            # runtime_data.devices contains all Ring devices
+            devices = ring_data.devices
+            for device in devices.other:
+                if device.kind == "intercom_handset_video":
+                    _LOGGER.info(
+                        "Found Ring Intercom Video: %s (id: %s)",
+                        device.name, device.device_api_id,
+                    )
+                    entities.append(RingIntercomCamera(device))
+        except Exception:
+            _LOGGER.exception("Error discovering Ring Intercom Video devices")
 
     if entities:
         async_add_entities(entities)

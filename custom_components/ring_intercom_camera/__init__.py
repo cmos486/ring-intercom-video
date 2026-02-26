@@ -17,6 +17,7 @@ import logging
 
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import discovery
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -89,8 +90,6 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     _patch_ring_other()
 
     hass.async_create_task(
-        hass.helpers.discovery.async_load_platform(
-            Platform.CAMERA, DOMAIN, {}, config
-        )
+        discovery.async_load_platform(hass, Platform.CAMERA, DOMAIN, {}, config)
     )
     return True
