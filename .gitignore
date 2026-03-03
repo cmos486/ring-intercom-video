@@ -6,3 +6,26 @@ build/
 .DS_Store
 *.swp
 *.swo
+
+# Claude
+.claude/
+.claude*
+CLAUDE.md
+
+# Secrets / tokens
+*.token
+*.token.json
+.env
+.env.*
+*secret*
+*credential*
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+Thumbs.db
+.Spotlight-V100
+.Trashes
