@@ -194,6 +194,34 @@ This component:
 - **Not required.** This component uses WebRTC live view which works without any subscription
 - Snapshots and recordings stored in the cloud do require Ring Protect, but this component doesn't use those APIs
 
+**❓ Connection takes a few seconds / audio feels laggy**
+- Most of the live‑stream latency (audio delay, time to connect) comes from Ring's cloud relay and the intercom's own audio buffering — the media flows **directly browser ↔ Ring**, not through this component, so there's little it can change.
+- To find out *where* the connection‑setup seconds actually go, enable debug logging for this component. It's **opt‑in** and silent for everyone else. Enable it at runtime (no restart) from **Developer Tools → Actions**:
+
+  ```yaml
+  action: logger.set_level
+  data:
+    custom_components.ring_intercom_camera: debug
+  ```
+
+  …or persistently in `configuration.yaml`:
+
+  ```yaml
+  logger:
+    logs:
+      custom_components.ring_intercom_camera: debug
+  ```
+
+  Then pick up a call and check the log. You'll see timestamps for each phase:
+
+  ```
+  WebRTC <id>: offer received, contacting Ring
+  WebRTC <id>: Ring answer received after 850ms
+  WebRTC <id>: first Ring ICE candidate after 920ms
+  ```
+
+  A high "Ring answer received" time means Ring is the bottleneck (device wake‑up + cloud); a fast answer but slow video usually points to ICE negotiation on the browser/card side.
+
 ---
 
 ## 🙏 Attribution

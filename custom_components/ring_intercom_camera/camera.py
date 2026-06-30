@@ -347,13 +347,38 @@ class RingIntercomCamera(Camera):
         self, offer_sdp: str, session_id: str, send_message: WebRTCSendMessage
     ) -> None:
         """Handle WebRTC offer from the HA frontend."""
+        # Timing instrumentation: measure where the connection-setup
+        # seconds go (Ring answer round-trip vs. ICE exchange). Enable
+        # with: logger -> custom_components.ring_intercom_camera: debug
+        t_start = time.monotonic()
+        timing = {"answer": False, "candidate": False}
+
+        def _ms() -> int:
+            return int((time.monotonic() - t_start) * 1000)
+
         def _message_wrapper(ring_msg: RingWebRtcMessage) -> None:
             if ring_msg.error_code:
                 msg = ring_msg.error_message or ""
+                _LOGGER.debug(
+                    "WebRTC %s: error after %dms: %s",
+                    session_id, _ms(), msg,
+                )
                 send_message(WebRTCError(ring_msg.error_code, msg))
             elif ring_msg.answer:
+                if not timing["answer"]:
+                    timing["answer"] = True
+                    _LOGGER.debug(
+                        "WebRTC %s: Ring answer received after %dms",
+                        session_id, _ms(),
+                    )
                 send_message(WebRTCAnswer(ring_msg.answer))
             elif ring_msg.candidate:
+                if not timing["candidate"]:
+                    timing["candidate"] = True
+                    _LOGGER.debug(
+                        "WebRTC %s: first Ring ICE candidate after %dms",
+                        session_id, _ms(),
+                    )
                 send_message(
                     WebRTCCandidate(
                         RTCIceCandidateInit(
@@ -363,8 +388,13 @@ class RingIntercomCamera(Camera):
                     )
                 )
 
+        _LOGGER.debug("WebRTC %s: offer received, contacting Ring", session_id)
         await self._device.generate_async_webrtc_stream(
             offer_sdp, session_id, _message_wrapper, keep_alive_timeout=None
+        )
+        _LOGGER.debug(
+            "WebRTC %s: generate_async_webrtc_stream returned after %dms",
+            session_id, _ms(),
         )
 
     async def async_on_webrtc_candidate(
