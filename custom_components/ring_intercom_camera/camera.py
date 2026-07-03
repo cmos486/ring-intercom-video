@@ -158,9 +158,12 @@ class RingIntercomCamera(Camera):
         try:
             from aiortc import RTCPeerConnection, RTCSessionDescription
         except ImportError:
-            _LOGGER.error(
-                "aiortc not available — snapshot capture requires aiortc. "
-                "It should be installed automatically via requirements."
+            _LOGGER.debug(
+                "aiortc not installed — snapshot capture is unavailable. "
+                "aiortc is an optional dependency (not auto-installed) because "
+                "its required `av` version range conflicts with the `av` "
+                "version pinned by some Home Assistant Core releases. Live "
+                "WebRTC streaming does not need aiortc and is unaffected."
             )
             return None
 

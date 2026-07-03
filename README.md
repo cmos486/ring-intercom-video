@@ -167,6 +167,19 @@ This component:
 2. 🎥 **Creates a camera entity** with `CameraEntityFeature.STREAM` that implements the HA WebRTC signaling interface (`async_handle_async_webrtc_offer`, `async_on_webrtc_candidate`, `close_webrtc_session`)
 3. 🛰️ Uses `python-ring-doorbell`'s `RingWebRtcStream` for all signaling — no custom WebSocket/HTTP code needed
 
+### 📷 About the optional server-side snapshot feature
+
+`camera.snapshot` / `async_camera_image()` support (capturing a still frame
+server-side, for use in automations without a browser open) uses `aiortc`.
+`aiortc` is **not** listed as a hard dependency in `manifest.json` — every
+released `aiortc` version pins a specific `av` version range, and this can
+conflict with the `av` version some Home Assistant Core releases pin for
+their own camera/stream stack, which would otherwise make the *entire
+integration* fail to load over one optional feature. If `aiortc` happens to
+already be importable in your HA environment, snapshot capture works
+automatically; if not, it silently no-ops (see debug logs) and the live
+WebRTC view in Lovelace is unaffected either way.
+
 ---
 
 ## 🔧 Troubleshooting
@@ -189,6 +202,10 @@ This component:
 - The browser requires a **secure context** (HTTPS) to access the microphone
 - Use Nabu Casa, a reverse proxy with Let's Encrypt, or a native HA HTTPS certificate
 - Also make sure you're using the [companion card](https://github.com/cmos486/ring-intercom-video-card) — built‑in HA camera cards do not implement two‑way audio
+
+**❓ Server-side snapshot always returns nothing / debug log says "aiortc not installed"**
+- Expected on Home Assistant installations where `aiortc`'s required `av` version conflicts with the one Core pins — see [Technical details](#-about-the-optional-server-side-snapshot-feature)
+- The live WebRTC view (the main feature of this integration) does **not** depend on `aiortc` and is unaffected
 
 **❓ Ring Protect subscription**
 - **Not required.** This component uses WebRTC live view which works without any subscription
