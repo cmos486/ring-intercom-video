@@ -159,8 +159,10 @@ class RingIntercomCamera(Camera):
             from aiortc import RTCPeerConnection, RTCSessionDescription
         except ImportError:
             _LOGGER.error(
-                "aiortc not available — snapshot capture requires aiortc. "
-                "It should be installed automatically via requirements."
+                "aiortc not available — server-side snapshot capture is disabled. "
+                "aiortc is an optional dependency (native WebRTC streaming works "
+                "without it); install it manually in the HA environment to enable "
+                "snapshots."
             )
             return None
 
