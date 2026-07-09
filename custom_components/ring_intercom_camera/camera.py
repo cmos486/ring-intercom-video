@@ -98,6 +98,10 @@ class RingIntercomCamera(Camera):
         self._last_image_time: float = 0
         self._capturing: bool = False
 
+        # Lazy aiortc install (see _ensure_aiortc)
+        self._aiortc_lock = asyncio.Lock()
+        self._aiortc_failed: bool = False
+
     @property
     def is_recording(self) -> bool:
         return False
@@ -153,18 +157,81 @@ class RingIntercomCamera(Camera):
 
         return self._last_image
 
+    async def _ensure_aiortc(self) -> bool:
+        """Make sure aiortc is importable, installing it on demand.
+
+        aiortc is deliberately NOT a hard manifest requirement: it pulls
+        native deps (av/PyAV, pylibsrtp, cffi, cryptography) that lack
+        prebuilt wheels on some platforms/Python versions. Declaring it in
+        the manifest would block the ENTIRE integration from loading there,
+        even though it's only needed for the optional server-side snapshot.
+
+        Instead we install it lazily the first time a snapshot is requested,
+        using Home Assistant's own requirements installer. Native WebRTC
+        live streaming always works; snapshots "just work" automatically on
+        any platform where a wheel is available (amd64/aarch64), with no
+        user interaction.
+        """
+        try:
+            import aiortc  # noqa: F401
+            return True
+        except ImportError:
+            pass
+
+        async with self._aiortc_lock:
+            # Another concurrent call may have installed it meanwhile.
+            try:
+                import aiortc  # noqa: F401
+                return True
+            except ImportError:
+                pass
+
+            if self._aiortc_failed:
+                return False
+
+            from homeassistant.requirements import (
+                RequirementsNotFound,
+                async_process_requirements,
+            )
+
+            from . import DOMAIN
+
+            _LOGGER.info(
+                "Installing aiortc for server-side snapshot capture "
+                "(one-time, needed only for snapshots, not live streaming)…"
+            )
+            try:
+                await async_process_requirements(
+                    self.hass, DOMAIN, ["aiortc>=1.9.0"], is_built_in=False
+                )
+            except RequirementsNotFound:
+                self._aiortc_failed = True
+                _LOGGER.error(
+                    "Could not install aiortc automatically — server-side "
+                    "snapshots are unavailable on this platform (no prebuilt "
+                    "wheel for this arch/Python). Native WebRTC live streaming "
+                    "is unaffected."
+                )
+                return False
+
+            # Refresh import caches so the freshly-installed package is found.
+            import importlib
+            importlib.invalidate_caches()
+            try:
+                import aiortc  # noqa: F401
+                _LOGGER.info("aiortc installed — snapshot capture enabled")
+                return True
+            except ImportError:
+                self._aiortc_failed = True
+                _LOGGER.error("aiortc installed but still not importable")
+                return False
+
     async def _capture_snapshot(self) -> bytes | None:
         """Server-side WebRTC snapshot using aiortc."""
-        try:
-            from aiortc import RTCPeerConnection, RTCSessionDescription
-        except ImportError:
-            _LOGGER.error(
-                "aiortc not available — server-side snapshot capture is disabled. "
-                "aiortc is an optional dependency (native WebRTC streaming works "
-                "without it); install it manually in the HA environment to enable "
-                "snapshots."
-            )
+        if not await self._ensure_aiortc():
             return None
+
+        from aiortc import RTCPeerConnection, RTCSessionDescription
 
         from ring_doorbell.const import (
             APP_API_URI,
