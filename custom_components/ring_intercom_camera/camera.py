@@ -156,22 +156,20 @@ class RingIntercomCamera(Camera):
     async def _capture_snapshot(self) -> bytes | None:
         """Server-side WebRTC snapshot using aiortc.
 
-        aiortc is an OPTIONAL dependency. It is intentionally never installed
-        automatically: it pulls native deps (av/PyAV, pylibsrtp, cffi,
-        cryptography) and installing them into Home Assistant's shared Python
-        environment at runtime can clobber HA's pinned versions (e.g. cffi),
-        breaking unrelated integrations. If snapshots are needed, install
-        aiortc into the HA environment yourself; native WebRTC live streaming
-        works without it.
+        aiortc is declared as a manifest requirement, so Home Assistant
+        installs it via normal dependency resolution. Since aiortc 1.15.0 it
+        allows PyAV < 18, so the resolver reuses HA's shared av (17.x) instead
+        of failing — no runtime auto-install needed. The import guard below
+        stays as a safety net for environments where aiortc still can't load.
         """
         try:
             from aiortc import RTCPeerConnection, RTCSessionDescription
         except ImportError:
             _LOGGER.error(
                 "aiortc not available — server-side snapshot capture is "
-                "disabled. It's an optional dependency (native WebRTC "
-                "streaming works without it); install it manually in the HA "
-                "environment if you need snapshots."
+                "disabled (native WebRTC live streaming works without it). "
+                "This is unexpected since aiortc is a manifest requirement; "
+                "check the setup logs for a dependency resolution failure."
             )
             return None
 
