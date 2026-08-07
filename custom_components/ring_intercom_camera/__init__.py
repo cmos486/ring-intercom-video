@@ -1,8 +1,9 @@
-"""Ring Intercom Video Camera integration.
+"""Ring Intercom Camera integration.
 
-Adds a WebRTC live-stream camera entity for Ring Intercom Video
-(intercom_handset_video) devices. The official Ring integration only creates
-lock/ding entities for intercoms; this component adds the missing camera.
+Adds a WebRTC live-stream camera entity for Ring Intercom devices — both
+intercom_handset_video and the audio-only intercom_handset_audio. The official
+Ring integration only creates lock/ding entities for intercoms; this component
+adds the missing camera (which on the audio kind carries two-way audio only).
 
 Architecture:
 - Hooks into the existing Ring integration's data/auth
@@ -29,8 +30,10 @@ def _patch_ring_other() -> None:
     """Add WebRTC stream methods to RingOther (intercom) class.
 
     RingOther doesn't inherit from RingDoorBell so it lacks WebRTC methods,
-    even though the intercom_handset_video hardware supports WebRTC live view
-    via the exact same signaling protocol.
+    even though both intercom kinds support WebRTC live view via the exact
+    same signaling protocol. Nothing here is kind-specific: upstream's
+    INTERCOM_KINDS already covers intercom_handset_audio, so the only gap is
+    that these four methods live on RingDoorBell instead of RingGeneric.
     """
     from ring_doorbell.other import RingOther
     from ring_doorbell.webrtcstream import RingWebRtcStream

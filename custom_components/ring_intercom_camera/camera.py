@@ -1,4 +1,4 @@
-"""Camera platform for Ring Intercom Video.
+"""Camera platform for Ring Intercom.
 
 Two modes of operation:
 1. LIVE STREAM (browser WebRTC) — user opens camera card in Lovelace,
@@ -9,6 +9,13 @@ Two modes of operation:
    async_camera_image() triggers a server-side WebRTC connection
    using aiortc, captures a stabilized video frame, returns JPEG.
    Works from automations without needing a browser open.
+
+Two device kinds are supported:
+- intercom_handset_video: both modes.
+- intercom_handset_audio: live stream only (two-way audio). The device has
+  no camera, so mode 2 is disabled — see _audio_only below. The entity is
+  still a camera because HA's WebRTC signaling relay is a camera-platform
+  feature; there is no audio-only entity type to carry it.
 """
 
 from __future__ import annotations
@@ -42,6 +49,12 @@ SNAPSHOT_BRIGHTNESS_THRESHOLD = 25  # Min brightness to consider "real" video
 SNAPSHOT_STABILIZE_FRAMES = 5    # Consecutive bright frames before capture
 SNAPSHOT_CACHE_SECONDS = 10      # Don't re-capture within this window
 
+# Ring intercom kinds that expose WebRTC live view. Both speak the exact same
+# signaling protocol; the audio kind simply has no video track.
+KIND_VIDEO = "intercom_handset_video"
+KIND_AUDIO = "intercom_handset_audio"
+SUPPORTED_KINDS = (KIND_VIDEO, KIND_AUDIO)
+
 
 async def async_setup_platform(
     hass: HomeAssistant,
@@ -64,33 +77,34 @@ async def async_setup_platform(
         try:
             devices = ring_data.devices
             for device in devices.other:
-                if device.kind == "intercom_handset_video":
+                if device.kind in SUPPORTED_KINDS:
                     _LOGGER.info(
-                        "Found Ring Intercom Video: %s (id: %s)",
-                        device.name, device.device_api_id,
+                        "Found Ring Intercom (%s): %s (id: %s)",
+                        device.kind, device.name, device.device_api_id,
                     )
                     entities.append(RingIntercomCamera(device))
         except Exception:
-            _LOGGER.exception("Error discovering Ring Intercom Video devices")
+            _LOGGER.exception("Error discovering Ring Intercom devices")
 
     if entities:
         async_add_entities(entities)
-        _LOGGER.info("Added %d Ring Intercom Video camera(s)", len(entities))
+        _LOGGER.info("Added %d Ring Intercom camera(s)", len(entities))
     else:
-        _LOGGER.info("No Ring Intercom Video devices found")
+        _LOGGER.info("No Ring Intercom devices found")
 
 
 class RingIntercomCamera(Camera):
-    """WebRTC live-stream camera + server-side snapshot for Ring Intercom Video."""
+    """WebRTC live-stream camera + server-side snapshot for Ring Intercom."""
 
     def __init__(self, device) -> None:
         """Initialize the camera."""
         super().__init__()
         self._device = device
+        self._audio_only = device.kind == KIND_AUDIO
         self._attr_name = f"{device.name} Camera"
         self._attr_unique_id = f"ring_intercom_camera_{device.device_api_id}"
         self._attr_brand = "Ring"
-        self._attr_model = "Intercom Video"
+        self._attr_model = "Intercom Audio" if self._audio_only else "Intercom Video"
         self._attr_supported_features = CameraEntityFeature.STREAM
 
         # Snapshot cache
@@ -112,6 +126,9 @@ class RingIntercomCamera(Camera):
             "device_id": self._device.device_api_id,
             "device_kind": self._device.kind,
             "stream_method": "webrtc_native",
+            # The companion card reads this to drop the video element and
+            # render an audio-only intercom UI.
+            "audio_only": self._audio_only,
             "last_snapshot": self._last_image_time or None,
         }
 
@@ -125,6 +142,14 @@ class RingIntercomCamera(Camera):
         Returns cached image if recent, otherwise starts a new
         WebRTC session with aiortc to grab a stabilized frame.
         """
+        # Audio-only intercoms have no camera. Bail out before touching Ring:
+        # HA calls this on every entity-picture refresh, and each call would
+        # otherwise open a live session and block for the full frame timeout
+        # (SNAPSHOT_MAX_FRAMES / the 10s track.recv timeout) waiting for a
+        # video track that never arrives.
+        if self._audio_only:
+            return None
+
         # Return cache if fresh
         if (
             self._last_image

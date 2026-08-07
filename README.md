@@ -77,9 +77,26 @@ What the card adds on top of this integration:
 | Device | Kind | Supported |
 |--------|------|-----------|
 | Ring Intercom Handset Video (2024/2025) | `intercom_handset_video` | ✅ Yes |
-| Ring Intercom (audio only) | `intercom_handset_audio` | ❌ No (no camera) |
+| Ring Intercom (audio only) | `intercom_handset_audio` | 🧪 Experimental — two‑way audio only |
 
 Tested with Fermax 3304/99139 (5‑wire) as the predecessor analog intercom.
+
+### 🧪 Audio-only intercoms (`intercom_handset_audio`)
+
+This branch adds support for the audio-only Ring Intercom, which has **no camera**. Ring's WebRTC live
+view accepts an audio-only session on this hardware and the uplink reaches the outdoor speaker, so you
+get working **two-way audio** — confirmed on real hardware (Comelit / Simplebus2 chain).
+
+What is different from the video model:
+
+- 📷 **No snapshots.** `camera.snapshot` and entity pictures return nothing; there is no video track to
+  grab. The server-side aiortc path is disabled for this kind, so nothing is attempted.
+- 🎛️ **The card must offer audio only** — no `recvonly` video transceiver. Ring mirrors every offered
+  m-line into its answer, so asking for video on a camera-less device just yields a permanently black
+  `<video>`. The entity exposes `audio_only: true` in its attributes for exactly this.
+- 🗣️ **Speak continuously when testing.** Something in the Ring → building-intercom chain is
+  voice-switched: a pulsed test tone gets discarded and looks like a total failure. Browser audio is
+  continuous by construction, so this only bites synthetic test rigs.
 
 ---
 
@@ -122,7 +139,7 @@ Add to your `configuration.yaml`:
 ring_intercom_camera:
 ```
 
-Restart Home Assistant. The component will **auto‑discover** `intercom_handset_video` devices from your existing Ring integration.
+Restart Home Assistant. The component will **auto‑discover** `intercom_handset_video` and `intercom_handset_audio` devices from your existing Ring integration.
 
 A new camera entity will appear: `camera.<device_name>_camera` 🎉
 
@@ -173,10 +190,12 @@ This component:
 
 **❓ No camera entity appears after restart**
 - Check that the official Ring integration is working (Settings → Integrations → Ring)
-- Verify your device is an `intercom_handset_video` (not `intercom_handset_audio`)
-- Check HA logs for `ring_intercom_camera` entries
+- Verify your device is an `intercom_handset_video` or `intercom_handset_audio`
+- Check HA logs for `ring_intercom_camera` entries — it logs the kind it discovered
 
 **❓ Live view shows black / no video**
+- On `intercom_handset_audio` this is permanent and expected: the device has no camera. Audio is the
+  only media; use the companion card, which hides the video element when `audio_only` is set.
 - This is expected when the Fermax camera is not active
 - The analog camera only outputs video during a ding or manual activation
 - Try pressing the call button on the street panel, then open the live view
