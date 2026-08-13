@@ -9,6 +9,8 @@ Architecture:
 - Monkey-patches RingOther to add WebRTC stream methods (same as RingDoorBell)
 - Exposes a native HA WebRTC camera entity (browser does the WebRTC, no aiortc needed)
 - When user opens the camera in Lovelace, the browser establishes WebRTC directly
+- Exposes a binary_sensor reporting whether a live view is open, because the
+  device's single analog capture path allows only one consumer at a time
 """
 
 from __future__ import annotations
@@ -19,10 +21,11 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import discovery
 
+from .const import DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
 
-DOMAIN = "ring_intercom_camera"
-PLATFORMS = [Platform.CAMERA]
+PLATFORMS = [Platform.CAMERA, Platform.BINARY_SENSOR]
 
 
 def _patch_ring_other() -> None:
@@ -92,7 +95,10 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
     _patch_ring_other()
 
-    hass.async_create_task(
-        discovery.async_load_platform(hass, Platform.CAMERA, DOMAIN, {}, config)
-    )
+    # Both platforms look up their per-device LiveSessionTracker from
+    # hass.data, so they can be loaded in any order.
+    for platform in PLATFORMS:
+        hass.async_create_task(
+            discovery.async_load_platform(hass, platform, DOMAIN, {}, config)
+        )
     return True

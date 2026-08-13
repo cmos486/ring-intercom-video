@@ -94,6 +94,23 @@ When the camera is not active, the stream shows a **black image**. This is norma
 
 > 💡 **Tip:** If you have a Zigbee/Z‑Wave relay connected to the camera button on your indoor unit, you can trigger the camera via HA automation before opening the stream.
 
+### 🔒 One consumer at a time
+
+The intercom digitizes a **single** analog CVBS signal, so only one WebRTC session can actually carry
+picture. A second concurrent session negotiates fine and receives H.264 — with black frames.
+
+That has one visible consequence: **while you have a live view open, snapshots serve the last cached image
+instead of capturing a new one.** Capturing would open a competing session and return black, replacing a
+good image with a useless one. This is the hardware being honest, not a limitation of the integration.
+
+Note this hits the ordinary path: opening the camera's more‑info dialog starts a live preview, so a
+snapshot taken from that same dialog is exactly the colliding case. To capture a fresh still, call
+`camera.snapshot` with no client viewing the camera — including wallpanels, which hold a session open for
+as long as the card is displayed.
+
+To see whether anything is streaming, use the `binary_sensor.<device_name>_live_session` entity described
+below.
+
 ---
 
 ## 📥 Installation
@@ -124,7 +141,17 @@ ring_intercom_camera:
 
 Restart Home Assistant. The component will **auto‑discover** `intercom_handset_video` devices from your existing Ring integration.
 
-A new camera entity will appear: `camera.<device_name>_camera` 🎉
+Two entities will appear 🎉
+
+| Entity | What it's for |
+|---|---|
+| `camera.<device_name>_camera` | Live WebRTC view and snapshots |
+| `binary_sensor.<device_name>_live_session` | `on` while at least one browser holds a live view. Its `session_count` attribute gives the exact number |
+
+The binary sensor exists because of the one‑consumer constraint above: use it to keep automations from
+competing with someone who is using the intercom, and to spot a stuck session count (which would keep
+snapshots pinned to the cache). Bear in mind that a wallpanel permanently displaying the card keeps it
+`on` indefinitely, so an automation that waits for idle would never run.
 
 ---
 
@@ -180,6 +207,16 @@ This component:
 - This is expected when the Fermax camera is not active
 - The analog camera only outputs video during a ding or manual activation
 - Try pressing the call button on the street panel, then open the live view
+
+**❓ Snapshots come out all black**
+- If the camera isn't active, that's the expected case above — activate it first (ding or handset button)
+- If the camera *is* active and you can see video: something is holding a live view open, and the snapshot
+  is serving its cache rather than capturing black. Check `binary_sensor.<device_name>_live_session`, close
+  every client showing the camera (**including wallpanels**), and call `camera.snapshot` from
+  Developer Tools → Actions with a `filename:` so no preview is opened
+- If it's still black with nothing streaming, enable debug logging (see below): the capture logs how many
+  frames it examined and the best brightness it saw, which distinguishes "no signal arrived" from
+  "the capture window was too short"
 
 **❓ Live view button doesn't appear**
 - Make sure you're using a browser that supports WebRTC (Chrome, Firefox, Safari, Edge — all current versions)

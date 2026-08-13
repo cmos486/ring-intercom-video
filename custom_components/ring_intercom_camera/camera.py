@@ -9,6 +9,11 @@ Two modes of operation:
    async_camera_image() triggers a server-side WebRTC connection
    using aiortc, captures a stabilized video frame, returns JPEG.
    Works from automations without needing a browser open.
+
+The two modes cannot run at the same time. The device digitizes a single
+analog CVBS signal, so a second concurrent WebRTC session receives H.264
+frames that carry no picture. Mode 2 therefore declines to start while a
+mode 1 session is open and serves its cached image instead — see issue #5.
 """
 
 from __future__ import annotations
@@ -33,6 +38,8 @@ from homeassistant.components.camera import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
+
+from .session import get_session_tracker
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,7 +76,7 @@ async def async_setup_platform(
                         "Found Ring Intercom Video: %s (id: %s)",
                         device.name, device.device_api_id,
                     )
-                    entities.append(RingIntercomCamera(device))
+                    entities.append(RingIntercomCamera(hass, device))
         except Exception:
             _LOGGER.exception("Error discovering Ring Intercom Video devices")
 
@@ -83,10 +90,11 @@ async def async_setup_platform(
 class RingIntercomCamera(Camera):
     """WebRTC live-stream camera + server-side snapshot for Ring Intercom Video."""
 
-    def __init__(self, device) -> None:
+    def __init__(self, hass: HomeAssistant, device) -> None:
         """Initialize the camera."""
         super().__init__()
         self._device = device
+        self._sessions = get_session_tracker(hass, device.device_api_id)
         self._attr_name = f"{device.name} Camera"
         self._attr_unique_id = f"ring_intercom_camera_{device.device_api_id}"
         self._attr_brand = "Ring"
@@ -113,6 +121,10 @@ class RingIntercomCamera(Camera):
             "device_kind": self._device.kind,
             "stream_method": "webrtc_native",
             "last_snapshot": self._last_image_time or None,
+            # Deliberately no session count here: this entity doesn't rewrite
+            # its state when sessions change, so the number would go stale and
+            # read 0 during a live view — misleading exactly when someone is
+            # debugging. binary_sensor.<name>_live_session owns that fact.
         }
 
     # ---- Snapshot (server-side WebRTC capture) ----
@@ -125,6 +137,18 @@ class RingIntercomCamera(Camera):
         Returns cached image if recent, otherwise starts a new
         WebRTC session with aiortc to grab a stabilized frame.
         """
+        # A browser is streaming: a second session against the single analog
+        # capture path returns black frames (issue #5). Serve the cache rather
+        # than replace a good image with a black one — and note this is the
+        # common path, since HA's more-info dialog shows a live preview while
+        # the same dialog can ask for a still.
+        if self._sessions.active:
+            _LOGGER.debug(
+                "Snapshot skipped for %s: %d live view session(s) open",
+                self._device.name, self._sessions.count,
+            )
+            return self._last_image
+
         # Return cache if fresh
         if (
             self._last_image
@@ -253,6 +277,18 @@ class RingIntercomCamera(Camera):
                 _LOGGER.debug("Frame timeout after %d frames", frame_count)
             except Exception as exc:
                 _LOGGER.debug("Frame capture error: %s", exc)
+
+            # Instrumentation for the open question in issue #5: is
+            # SNAPSHOT_MAX_FRAMES (~3s) too short for the analog camera to
+            # produce a usable picture? These two numbers decide it. A dark
+            # result with frame_count at the cap means the window is too
+            # short; a dark result with few frames means no signal arrived.
+            _LOGGER.debug(
+                "Snapshot capture for %s: %d frames examined (cap %d), "
+                "best brightness %.1f (threshold %d)",
+                self._device.name, frame_count, SNAPSHOT_MAX_FRAMES,
+                best_brightness, SNAPSHOT_BRIGHTNESS_THRESHOLD,
+            )
 
             if best_frame:
                 buf = BytesIO()
@@ -398,9 +434,19 @@ class RingIntercomCamera(Camera):
                 )
 
         _LOGGER.debug("WebRTC %s: offer received, contacting Ring", session_id)
-        await self._device.generate_async_webrtc_stream(
-            offer_sdp, session_id, _message_wrapper, keep_alive_timeout=None
-        )
+        # Register before awaiting: the session is occupying the device's
+        # single capture path from here on, not only once setup completes.
+        self._sessions.add(session_id)
+        try:
+            await self._device.generate_async_webrtc_stream(
+                offer_sdp, session_id, _message_wrapper, keep_alive_timeout=None
+            )
+        except Exception:
+            # HA won't call close_webrtc_session for a session that never
+            # started, so release it here or the count leaks and snapshots
+            # stay on the cache forever.
+            self._sessions.discard(session_id)
+            raise
         _LOGGER.debug(
             "WebRTC %s: generate_async_webrtc_stream returned after %dms",
             session_id, _ms(),
@@ -420,4 +466,5 @@ class RingIntercomCamera(Camera):
     @callback
     def close_webrtc_session(self, session_id: str) -> None:
         """Close a WebRTC session."""
+        self._sessions.discard(session_id)
         self._device.sync_close_webrtc_stream(session_id)
