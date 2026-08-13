@@ -108,6 +108,11 @@ snapshot taken from that same dialog is exactly the colliding case. To capture a
 `camera.snapshot` with no client viewing the camera — including wallpanels, which hold a session open for
 as long as the card is displayed.
 
+If there is **no** cached image yet — a live view is open and Home Assistant has just restarted —
+`camera.snapshot` fails with *"Unable to get image"* rather than returning anything. That's deliberate: the
+only image it could produce in that moment is a black one, and an error is more honest than a picture that
+looks like a broken camera.
+
 To see whether anything is streaming, use the `binary_sensor.<device_name>_live_session` entity described
 below.
 
@@ -217,6 +222,10 @@ This component:
 - If it's still black with nothing streaming, enable debug logging (see below): the capture logs how many
   frames it examined and the best brightness it saw, which distinguishes "no signal arrived" from
   "the capture window was too short"
+
+**❓ `camera.snapshot` fails with "Unable to get image"**
+- Expected if a live view is open and there's no cached image yet, e.g. right after a restart. See
+  *One consumer at a time* above — close the live view and try again
 
 **❓ Live view button doesn't appear**
 - Make sure you're using a browser that supports WebRTC (Chrome, Firefox, Safari, Edge — all current versions)
