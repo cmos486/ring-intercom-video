@@ -11,6 +11,12 @@ Architecture:
 - When user opens the camera in Lovelace, the browser establishes WebRTC directly
 - Exposes a binary_sensor reporting whether a live view is open, because the
   device's single analog capture path allows only one consumer at a time
+- Exposes a switch (default on) deciding whether live views take the
+  intercom audio; off means the physical handset keeps its speaker while the
+  picture shows elsewhere (TV, wallpanel). Toggling applies to running
+  sessions too, without renegotiation. Offers flagged video-only (session
+  attribute "a=x-video-only", or audio m-line inactive/rejected — go2rtc/WHEP
+  bridges) never take the audio regardless of the switch
 """
 
 from __future__ import annotations
@@ -25,7 +31,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.CAMERA, Platform.BINARY_SENSOR]
+PLATFORMS = [Platform.CAMERA, Platform.BINARY_SENSOR, Platform.SWITCH]
 
 
 def _patch_ring_other() -> None:
@@ -38,8 +44,25 @@ def _patch_ring_other() -> None:
     from ring_doorbell.other import RingOther
     from ring_doorbell.webrtcstream import RingWebRtcStream
 
+    from .audio import AudioGate, get_audio_state, offer_wants_audio
+
     if hasattr(RingOther, "generate_async_webrtc_stream"):
         return  # Already patched
+
+    class _GatedRingWebRtcStream(RingWebRtcStream):
+        """RingWebRtcStream whose signaling goes through an AudioGate."""
+
+        audio: bool = True
+
+        @property
+        def websocket(self):
+            return self.__dict__.get("_ws_gate")
+
+        @websocket.setter
+        def websocket(self, ws):
+            self.__dict__["_ws_gate"] = (
+                AudioGate(ws, self.audio) if ws is not None else None
+            )
 
     def _get_streams(self):
         """Lazy-init _webrtc_streams for already-instantiated objects."""
@@ -55,13 +78,18 @@ def _patch_ring_other() -> None:
         async def _close_callback():
             await self.close_webrtc_stream(session_id)
 
-        stream = RingWebRtcStream(
+        # Audio goes to this session only if the device's audio switch is on
+        # AND the offer didn't flag itself video-only (go2rtc/WHEP bridges).
+        audio = get_audio_state(self.device_api_id).enabled and offer_wants_audio(sdp_offer)
+        _LOGGER.debug("WebRTC %s: audio=%s", session_id, audio)
+        stream = _GatedRingWebRtcStream(
             self._ring,
             self.device_api_id,
             on_message_callback=on_message_callback,
             keep_alive_timeout=keep_alive_timeout,
             on_close_callback=_close_callback,
         )
+        stream.audio = audio
         streams[session_id] = stream
         await stream.generate(sdp_offer)
 
@@ -95,8 +123,8 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
     _patch_ring_other()
 
-    # Both platforms look up their per-device LiveSessionTracker from
-    # hass.data, so they can be loaded in any order.
+    # Platforms look up their per-device state (session tracker, audio state)
+    # lazily, so they can be loaded in any order.
     for platform in PLATFORMS:
         hass.async_create_task(
             discovery.async_load_platform(hass, platform, DOMAIN, {}, config)
