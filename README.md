@@ -189,6 +189,34 @@ You have two options:
 - 🎛️ **Use the companion [Ring Intercom Video Card](https://github.com/cmos486/ring-intercom-video-card)** *(recommended)* — full intercom UX with video + two‑way audio + open door + hang up.
 - 📷 **Use a built‑in card** — any Picture Entity or Camera card. When you click the live view button, WebRTC streaming starts automatically. (Video only — no two‑way audio.)
 
+### Audio switch — keep the handset audio while the picture shows elsewhere
+
+Any live view normally makes Ring route the intercom's incoming audio to the WebRTC session, so
+while the stream is open the physical handset shows video but its speaker goes silent. That is
+what the companion card wants (it plays the audio), but not what you want when the picture is
+consumed by something that never plays audio or does not need it — a go2rtc/Frigate restream, or
+a TV/kiosk screen that shows the visitor while you still pick up the physical handset to talk.
+
+The component exposes **`switch.<device>_audio`** (default **on**, state restored across restarts):
+
+| switch | live view gets | physical handset |
+|---|---|---|
+| on (default) | video + audio | video, speaker muted while a session is open |
+| off | video only | video + audio, as if nobody were watching |
+
+Turning it while a live view is open applies immediately — Ring accepts `stream_options` /
+`camera_options` on a running session, so no reconnection and no gap in the picture. Known
+limitation: turning it **off** mid‑session reliably mutes the live view, but the device occasionally
+only hands the audio back to the handset when the session ends. A typical
+setup: leave it **off**, and have the companion card's *pick up* button (or an automation) turn it
+**on** to move the conversation to the phone, and **off** again on hang up.
+
+Independently of the switch, a WebRTC offer is always treated as video‑only when it carries a
+session‑level attribute `a=x-video-only`, or when every audio m‑line is `a=inactive` / rejected
+(port 0). That is how a go2rtc/WHEP bridge (which cannot change its own offer) asks for a session
+that never takes the audio. With `logger: custom_components.ring_intercom_camera: debug` you will
+see `WebRTC <id>: audio=False` for such sessions.
+
 ---
 
 ## 🧪 Technical details
