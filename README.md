@@ -6,7 +6,7 @@
 
 > 🏠 Home Assistant custom integration that adds a **WebRTC live-stream camera** for the **Ring Intercom Handset Video** (2024/2025 model with built-in camera).
 
-The official Ring integration only exposes lock and ding entities for intercoms. This component adds the missing **camera entity with native WebRTC live view** — the same streaming technology Ring uses for its doorbell cameras.
+The official Ring integration only exposes an *Open door* button and ding entities for intercoms. This component adds the missing **camera entity with native WebRTC live view** — the same streaming technology Ring uses for its doorbell cameras.
 
 ---
 
@@ -63,7 +63,7 @@ What the card adds on top of this integration:
 - 📹 **Live video** in any Lovelace dashboard
 - 🎤 **Two‑way audio** with a push‑to‑talk button (uses your browser's microphone)
 - 📞 **Pick up / Hang up** buttons (clean WebRTC session teardown — releases mic and camera)
-- 🔓 **Open door** button (calls `lock.unlock` or any custom service of your choice)
+- 🔓 **Open door** button (presses the Ring integration's `button.*` opener, a ring-mqtt `lock.*`, or any custom service of your choice)
 - 🪟 **Pop‑up on a wallpanel** — pairs nicely with [`browser_mod`](https://github.com/thomasloven/hass-browser_mod) so a ding can automatically open the card as a popup on your tablet / wallpanel
 - 🌍 **Multi‑language UI** (Spanish, English, Catalan) with auto‑detection
 - 🛠️ **Visual editor** — pick entities, no YAML needed
@@ -178,7 +178,7 @@ Under the hood:
 - 🔗 This component declares `ring` as a dependency and accesses the already‑authenticated Ring API client from `hass.data["ring"]`
 - 🚫 No tokens, passwords, or API keys are stored or managed by this component
 
-If your Ring integration is working (you can see your intercom's lock and ding entities), this component will work too — no extra login needed.
+If your Ring integration is working (you can see your intercom's *Open door* button and ding entities), this component will work too — no extra login needed.
 
 ---
 
