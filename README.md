@@ -68,7 +68,7 @@ What the card adds on top of this integration:
 - 🌍 **Multi‑language UI** (Spanish, English, Catalan) with auto‑detection
 - 🛠️ **Visual editor** — pick entities, no YAML needed
 
-> 💡 **Suggested setup:** integration + card + `browser_mod` automation triggered on `binary_sensor.<intercom>_ding` → instant doorphone on every wallpanel in the house.
+> 💡 **Suggested setup:** integration + card + `browser_mod` automation triggered on `event.<intercom>_ding` → instant doorphone on every wallpanel in the house.
 
 ---
 
@@ -107,6 +107,11 @@ Note this hits the ordinary path: opening the camera's more‑info dialog starts
 snapshot taken from that same dialog is exactly the colliding case. To capture a fresh still, call
 `camera.snapshot` with no client viewing the camera — including wallpanels, which hold a session open for
 as long as the card is displayed.
+
+> ⚠️ **Home Assistant 2026.10+: snapshots are temporarily unavailable.** Server-side snapshots use
+> `aiortc`, whose latest release (1.15.0) requires PyAV < 18, while HA 2026.10 ships PyAV 19. Live view and
+> two-way audio are unaffected. Snapshots will return once aiortc publishes a release that supports PyAV 19
+> ([aiortc#1447](https://github.com/aiortc/aiortc/pull/1447)).
 
 If there is **no** cached image yet — a live view is open and Home Assistant has just restarted —
 `camera.snapshot` fails with *"Unable to get image"* rather than returning anything. That's deliberate: the
@@ -158,6 +163,41 @@ competing with someone who is using the intercom, and to spot a stuck session co
 snapshots pinned to the cache). Bear in mind that a wallpanel permanently displaying the card keeps it
 `on` indefinitely, so an automation that waits for idle would never run.
 
+### 📸 Example: snapshot to your phone on every ding
+
+Notify your phone when someone rings, give the camera a moment to wake up, and — only if nobody has
+already picked up — send a snapshot. The `live_session` check keeps the snapshot from colliding with
+someone who's answering (see *One consumer at a time*).
+
+```yaml
+automation:
+  - alias: "Intercom: snapshot on ding"
+    triggers:
+      - trigger: state
+        entity_id: event.front_entrance_ding
+        not_from: unavailable
+    actions:
+      - action: notify.mobile_app_your_phone
+        data:
+          message: "Someone is at the door"
+      - delay: "00:00:02"
+      - condition: state
+        entity_id: binary_sensor.front_entrance_live_session
+        state: "off"
+      - action: camera.snapshot
+        target:
+          entity_id: camera.front_entrance_camera
+        data:
+          filename: /config/www/intercom/last_ding.jpg
+      - action: telegram_bot.send_photo
+        data:
+          file: /config/www/intercom/last_ding.jpg
+          caption: "Front entrance"
+```
+
+Replace the entity IDs with your own, and swap the last step for whatever notifier you use.
+`camera.snapshot` needs the target directory to be in `allowlist_external_dirs`.
+
 ---
 
 ## 📋 Prerequisites
@@ -207,6 +247,19 @@ This component:
 - Check that the official Ring integration is working (Settings → Integrations → Ring)
 - Verify your device is an `intercom_handset_video` (not `intercom_handset_audio`)
 - Check HA logs for `ring_intercom_camera` entries
+
+**❓ "Setup failed" / integration won't load after updating to Home Assistant 2026.10**
+- Versions up to 0.5.1 declared `aiortc` as a requirement, and aiortc 1.15.0 can't coexist with the PyAV
+  version in HA 2026.10, so HA refused to load the whole integration. Update to 0.5.2 or later
+- The error is logged by `homeassistant.setup` / `homeassistant.requirements` ("Requirements for
+  ring_intercom_camera not found"), not under this component's logger — so filtering the logs by
+  `ring_intercom_camera` hides it
+
+**❓ No ding events in HA (and no notifications in the Ring app either)**
+- Dings come from the official Ring integration, which only receives what Ring's cloud sends. If the
+  Ring app itself isn't notifying you, HA can't either — this integration can't work around it
+- One user fixed this by contacting Ring support, who pushed an update to the intercom. Reinstalling the
+  app, logging out everywhere or rewiring the device didn't help
 
 **❓ Live view shows black / no video**
 - This is expected when the Fermax camera is not active
