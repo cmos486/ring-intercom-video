@@ -1,0 +1,10 @@
+close_live_sessions:
+  name: Close live views
+  description: >-
+    Ends every live view of the intercom camera that was opened through Home Assistant, so a
+    following camera.snapshot can capture a picture instead of serving the cached one. Also cuts
+    off anyone currently watching or talking through the live view.
+  target:
+    entity:
+      integration: ring_intercom_camera
+      domain: camera

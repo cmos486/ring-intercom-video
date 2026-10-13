@@ -36,6 +36,7 @@ from homeassistant.components.camera import (
     WebRTCSendMessage,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util.ssl import client_context
@@ -49,6 +50,8 @@ SNAPSHOT_MAX_FRAMES = 75         # Max frames to examine (~3s at 25fps)
 SNAPSHOT_BRIGHTNESS_THRESHOLD = 25  # Min brightness to consider "real" video
 SNAPSHOT_STABILIZE_FRAMES = 5    # Consecutive bright frames before capture
 SNAPSHOT_CACHE_SECONDS = 10      # Don't re-capture within this window
+
+SERVICE_CLOSE_LIVE_SESSIONS = "close_live_sessions"
 
 
 def _preload_snapshot_deps() -> None:
@@ -100,6 +103,9 @@ async def async_setup_platform(
     if entities:
         async_add_entities(entities)
         _LOGGER.info("Added %d Ring Intercom Video camera(s)", len(entities))
+        entity_platform.async_get_current_platform().async_register_entity_service(
+            SERVICE_CLOSE_LIVE_SESSIONS, {}, "async_close_live_sessions"
+        )
         hass.async_create_background_task(
             hass.async_add_executor_job(_preload_snapshot_deps),
             "ring_intercom_camera preload snapshot dependencies",
@@ -126,6 +132,9 @@ class RingIntercomCamera(Camera):
         self._last_image: bytes | None = None
         self._last_image_time: float = 0
         self._capture_task: asyncio.Task | None = None
+        # Per live-view session, the channel back to its browser — needed to
+        # tell it why its stream ended when we close it ourselves.
+        self._send_messages: dict[str, WebRTCSendMessage] = {}
 
     @property
     def is_recording(self) -> bool:
@@ -539,6 +548,7 @@ class RingIntercomCamera(Camera):
         # Register before awaiting: the session is occupying the device's
         # single capture path from here on, not only once setup completes.
         self._sessions.add(session_id)
+        self._send_messages[session_id] = send_message
         try:
             await self._device.generate_async_webrtc_stream(
                 offer_sdp, session_id, _message_wrapper, keep_alive_timeout=None
@@ -548,6 +558,7 @@ class RingIntercomCamera(Camera):
             # started, so release it here or the count leaks and snapshots
             # stay on the cache forever.
             self._sessions.discard(session_id)
+            self._send_messages.pop(session_id, None)
             raise
         _LOGGER.debug(
             "WebRTC %s: generate_async_webrtc_stream returned after %dms",
@@ -569,4 +580,37 @@ class RingIntercomCamera(Camera):
     def close_webrtc_session(self, session_id: str) -> None:
         """Close a WebRTC session."""
         self._sessions.discard(session_id)
+        self._send_messages.pop(session_id, None)
         self._device.sync_close_webrtc_stream(session_id)
+
+    async def async_close_live_sessions(self) -> None:
+        """Close every open live view so a snapshot can capture.
+
+        The opposite trade-off to the default: normally an open live view wins
+        and snapshots serve the cache. This service lets an automation decide
+        the snapshot matters more — e.g. a doorbell notification while a
+        wallpanel shows the card. Opt-in, because it also cuts off someone
+        who may be talking to the visitor.
+
+        Only sessions opened through this integration can be closed; a live
+        view in the Ring app itself is out of reach.
+        """
+        for session_id in self._sessions.session_ids:
+            _LOGGER.debug(
+                "Closing live view %s on %s for a snapshot",
+                session_id, self._device.name,
+            )
+            if send_message := self._send_messages.pop(session_id, None):
+                send_message(
+                    WebRTCError(
+                        "ring_intercom_live_view_closed",
+                        "Live view closed to take a snapshot",
+                    )
+                )
+            self._sessions.discard(session_id)
+            try:
+                await self._device.close_webrtc_stream(session_id)
+            except Exception:
+                _LOGGER.debug(
+                    "Error closing live view %s", session_id, exc_info=True
+                )

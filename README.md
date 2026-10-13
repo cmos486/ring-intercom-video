@@ -113,6 +113,12 @@ If there is **no** cached image yet — a live view is open and Home Assistant h
 only image it could produce in that moment is a black one, and an error is more honest than a picture that
 looks like a broken camera.
 
+If the snapshot matters more than the live view (say, a doorbell notification while a wallpanel shows the
+card), call `ring_intercom_camera.close_live_sessions` on the camera right before `camera.snapshot`. It ends
+every live view opened through Home Assistant; the card shows an error and the next snapshot captures
+normally. It is opt‑in because it also cuts off anyone talking to the visitor, and a live view in the Ring
+app itself is out of its reach.
+
 To see whether anything is streaming, use the `binary_sensor.<device_name>_live_session` entity described
 below.
 
