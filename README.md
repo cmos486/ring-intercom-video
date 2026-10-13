@@ -160,6 +160,60 @@ snapshots pinned to the cache). Bear in mind that a wallpanel permanently displa
 
 ---
 
+## 🔔 Recipe: fresh snapshot in doorbell notifications (HomeKit & co.)
+
+A capture takes a few seconds (Ring signaling, WebRTC setup, waiting for a stable frame). If the notification
+fires on the ding itself, the notifier fetches the picture *before* the new one exists and shows the previous
+visitor. Fire the notification after the snapshot is written instead:
+
+```yaml
+# configuration.yaml — a doorbell that rings only once the picture is on disk
+template:
+  - trigger:
+      - trigger: event
+        event_type: intercom_snapshot_ready
+    binary_sensor:
+      - name: Intercom doorbell ready
+        unique_id: intercom_doorbell_ready
+        state: "true"
+        auto_off: 5
+
+camera:
+  - platform: local_file
+    name: Intercom snapshot
+    file_path: /config/www/intercom_snapshot.jpg
+```
+
+```yaml
+# automation
+triggers:
+  - trigger: state
+    entity_id: event.<device_name>_ding
+    # Ignore restarts / reloads: each would wake the device for nothing
+    not_from: [unavailable, unknown]
+    not_to: [unavailable, unknown]
+actions:
+  - action: camera.snapshot
+    continue_on_error: true   # still ring if the capture fails
+    target:
+      entity_id: camera.<device_name>_camera
+    data:
+      filename: /config/www/intercom_snapshot.jpg
+  - event: intercom_snapshot_ready
+mode: single
+max_exceeded: silent
+```
+
+Expose `camera.intercom_snapshot` (not the live camera) to HomeKit with
+`linked_doorbell_sensor: binary_sensor.intercom_doorbell_ready`. Every Home app refresh then reads the file
+instead of waking the intercom.
+
+> 🔋 The same applies to dashboards: a picture card on `camera.<device_name>_camera` refreshes every ~10 s and
+> each refresh is a new capture session. Show the `local_file` camera there and keep the live camera for the
+> live view.
+
+---
+
 ## 📋 Prerequisites
 
 - ✅ The official **[Ring](https://www.home-assistant.io/integrations/ring/)** integration must be configured and working in HA

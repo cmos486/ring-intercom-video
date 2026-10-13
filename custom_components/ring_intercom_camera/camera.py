@@ -104,7 +104,7 @@ class RingIntercomCamera(Camera):
         # Snapshot cache
         self._last_image: bytes | None = None
         self._last_image_time: float = 0
-        self._capturing: bool = False
+        self._capture_task: asyncio.Task | None = None
 
     @property
     def is_recording(self) -> bool:
@@ -156,26 +156,43 @@ class RingIntercomCamera(Camera):
         ):
             return self._last_image
 
-        # Avoid concurrent captures
-        if self._capturing:
-            return self._last_image
+        # Join a capture that is already running instead of answering with
+        # the previous image: a caller arriving mid-capture (a doorbell
+        # automation racing a dashboard refresh, or a restarted automation
+        # run) wants the picture being taken now, and a second session would
+        # only compete for the single capture path.
+        task = self._capture_task
+        if task is None:
+            task = self._capture_task = self.hass.async_create_background_task(
+                self._capture_and_cache(),
+                f"ring_intercom_camera snapshot {self._device.device_api_id}",
+            )
+            task.add_done_callback(self._clear_capture_task)
 
-        self._capturing = True
+        # Shielded so a cancelled caller (automation in mode: restart) doesn't
+        # abort the capture for everyone else; its result is cached either way.
+        await asyncio.shield(task)
+        return self._last_image
+
+    @callback
+    def _clear_capture_task(self, task: asyncio.Task) -> None:
+        if self._capture_task is task:
+            self._capture_task = None
+
+    async def _capture_and_cache(self) -> None:
+        """Run one capture and store its result in the cache."""
         try:
             image = await self._capture_snapshot()
-            if image and len(image) > 500:
-                self._last_image = image
-                self._last_image_time = time.time()
-                _LOGGER.debug(
-                    "Snapshot captured for %s (%d bytes)",
-                    self._device.name, len(image),
-                )
         except Exception:
             _LOGGER.exception("Snapshot capture failed for %s", self._device.name)
-        finally:
-            self._capturing = False
-
-        return self._last_image
+            return
+        if image and len(image) > 500:
+            self._last_image = image
+            self._last_image_time = time.time()
+            _LOGGER.debug(
+                "Snapshot captured for %s (%d bytes)",
+                self._device.name, len(image),
+            )
 
     async def _capture_snapshot(self) -> bytes | None:
         """Server-side WebRTC snapshot using aiortc.
@@ -308,6 +325,7 @@ class RingIntercomCamera(Camera):
         session_id = None
 
         ssl_ctx = ssl.create_default_context()
+        done_waiter = asyncio.ensure_future(capture_done.wait())
 
         try:
             async with ws_connect(
@@ -329,42 +347,57 @@ class RingIntercomCamera(Camera):
                     },
                 }))
 
-                start = time.time()
-                while time.time() - start < 20 and not capture_done.is_set():
-                    try:
-                        raw = await asyncio.wait_for(ws.recv(), timeout=3)
-                        msg = json.loads(raw)
-                        method = msg.get("method", "")
-                        body = msg.get("body", {})
+                # Wait on the socket and on the capture together: once the
+                # frame is in, Ring has nothing left to say, so a plain recv()
+                # would idle until its timeout while the device keeps
+                # streaming — added latency and battery drain on every
+                # snapshot.
+                deadline = time.monotonic() + 20
+                while not capture_done.is_set():
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    recv = asyncio.ensure_future(ws.recv())
+                    await asyncio.wait(
+                        {recv, done_waiter},
+                        timeout=remaining,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if not recv.done():
+                        # websockets documents cancelling recv() as safe.
+                        recv.cancel()
+                        await asyncio.gather(recv, return_exceptions=True)
+                        continue
+                    raw = recv.result()
+                    msg = json.loads(raw)
+                    method = msg.get("method", "")
+                    body = msg.get("body", {})
 
-                        if method == "sdp":
-                            sdp = body.get("sdp", "")
-                            if sdp:
-                                await pc.setRemoteDescription(
-                                    RTCSessionDescription(
-                                        sdp=sdp, type="answer"
-                                    )
+                    if method == "sdp":
+                        sdp = body.get("sdp", "")
+                        if sdp:
+                            await pc.setRemoteDescription(
+                                RTCSessionDescription(
+                                    sdp=sdp, type="answer"
                                 )
-                        elif method == "session_created":
-                            session_id = body.get("session_id")
-                        elif (
-                            method == "notification"
-                            and body.get("text") == "camera_connected"
-                        ):
-                            if session_id:
-                                await ws.send(json.dumps({
-                                    "method": "activate_session",
-                                    "dialog_id": dialog_id,
-                                    "body": {
-                                        "doorbot_id": self._device.device_api_id,
-                                        "session_id": session_id,
-                                    },
-                                }))
-                        elif method == "close":
-                            break
-                    except asyncio.TimeoutError:
-                        if capture_done.is_set():
-                            break
+                            )
+                    elif method == "session_created":
+                        session_id = body.get("session_id")
+                    elif (
+                        method == "notification"
+                        and body.get("text") == "camera_connected"
+                    ):
+                        if session_id:
+                            await ws.send(json.dumps({
+                                "method": "activate_session",
+                                "dialog_id": dialog_id,
+                                "body": {
+                                    "doorbot_id": self._device.device_api_id,
+                                    "session_id": session_id,
+                                },
+                            }))
+                    elif method == "close":
+                        break
 
                 # Clean close
                 try:
@@ -382,6 +415,7 @@ class RingIntercomCamera(Camera):
         except Exception:
             _LOGGER.debug("WebRTC signaling error", exc_info=True)
         finally:
+            done_waiter.cancel()
             await pc.close()
 
         return snapshot_data["image"]
