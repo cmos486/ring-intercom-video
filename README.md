@@ -322,6 +322,9 @@ This component:
 
   A high "Ring answer received" time means Ring is the bottleneck (device wake‑up + cloud); a fast answer but slow video usually points to ICE negotiation on the browser/card side.
 
+  Snapshots log the same kind of timeline (`ticket and offer ready`, `Ring answer`, `camera connected`,
+  `first frame`, `frame chosen`), so you can see where the seconds between ding and picture go.
+
 ---
 
 ## 🙏 Attribution
