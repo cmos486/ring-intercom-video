@@ -15,6 +15,7 @@ Architecture:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from homeassistant.const import Platform
@@ -53,7 +54,19 @@ def _patch_ring_other() -> None:
         streams = _get_streams(self)
 
         async def _close_callback():
-            await self.close_webrtc_stream(session_id)
+            # Invoked by RingWebRtcStream._close() from inside its own reader
+            # task when Ring ends the session. The stream is already closing
+            # itself, so only forget it here: calling stream.close() again
+            # would make _close() await the reader task from within itself
+            # (RuntimeError: Task cannot await on itself) and the close
+            # reason would never reach the frontend (#6).
+            _get_streams(self).pop(session_id, None)
+            # ring-doorbell's _close() then awaits read_task — which is the
+            # current task here — and raises the same RuntimeError even
+            # without re-entry. Detach it: the reader exits on its own once
+            # the websocket is closed.
+            if stream.read_task is asyncio.current_task():
+                stream.read_task = None
 
         stream = RingWebRtcStream(
             self._ring,
