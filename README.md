@@ -108,11 +108,6 @@ snapshot taken from that same dialog is exactly the colliding case. To capture a
 `camera.snapshot` with no client viewing the camera — including wallpanels, which hold a session open for
 as long as the card is displayed.
 
-> ⚠️ **Home Assistant 2026.10+: snapshots are temporarily unavailable.** Server-side snapshots use
-> `aiortc`, whose latest release (1.15.0) requires PyAV < 18, while HA 2026.10 ships PyAV 19. Live view and
-> two-way audio are unaffected. Snapshots will return once aiortc publishes a release that supports PyAV 19
-> ([aiortc#1447](https://github.com/aiortc/aiortc/pull/1447)).
-
 If there is **no** cached image yet — a live view is open and Home Assistant has just restarted —
 `camera.snapshot` fails with *"Unable to get image"* rather than returning anything. That's deliberate: the
 only image it could produce in that moment is a black one, and an error is more honest than a picture that
@@ -251,6 +246,8 @@ This component:
 **❓ "Setup failed" / integration won't load after updating to Home Assistant 2026.10**
 - Versions up to 0.5.1 declared `aiortc` as a requirement, and aiortc 1.15.0 can't coexist with the PyAV
   version in HA 2026.10, so HA refused to load the whole integration. Update to 0.5.2 or later
+- 0.5.2–0.5.4 dropped `aiortc` to stay loadable, so snapshots were unavailable on HA 2026.10+. 0.5.5
+  requires `aiortc>=1.16.0`, which supports HA's PyAV 19, and snapshots work again
 - The error is logged by `homeassistant.setup` / `homeassistant.requirements` ("Requirements for
   ring_intercom_camera not found"), not under this component's logger — so filtering the logs by
   `ring_intercom_camera` hides it
@@ -260,6 +257,13 @@ This component:
   Ring app itself isn't notifying you, HA can't either — this integration can't work around it
 - One user fixed this by contacting Ring support, who pushed an update to the intercom. Reinstalling the
   app, logging out everywhere or rewiring the device didn't help
+
+**❓ The Ring app notifies you, but HA's `event.<device>_ding` never updates (since October 2026)**
+- Look for `binascii.Error: Incorrect padding` / `shutting down FcmPushClient` in the full HA log. Ring
+  changed the format of its push encryption headers and the `firebase-messaging` library used by the
+  official Ring integration can't parse them, so its listener stops at the first ding
+- Tracked in [home-assistant/core#191852](https://github.com/home-assistant/core/issues/191852); this
+  integration relies on the official one for dings and can't fix it on its own
 
 **❓ Live view shows black / no video**
 - This is expected when the Fermax camera is not active
