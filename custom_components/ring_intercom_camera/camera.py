@@ -180,12 +180,11 @@ class RingIntercomCamera(Camera):
     async def _capture_snapshot(self) -> bytes | None:
         """Server-side WebRTC snapshot using aiortc.
 
-        aiortc is deliberately NOT a manifest requirement: aiortc 1.15.0 pins
-        PyAV < 18 while HA 2026.10 pins av==19.0.0, and an unresolvable
-        requirement makes HA refuse to load the whole integration — live view
-        included. Restore it in the manifest once aiortc ships a release that
-        accepts av 19 (aiortc PR #1447). Until then snapshots are skipped when
-        aiortc isn't importable; it is never auto-installed at runtime.
+        aiortc is a manifest requirement again from 0.5.5: aiortc 1.16.0 accepts
+        PyAV 19, which Home Assistant 2026.10+ ships (aiortc PR #1447). The
+        import is still guarded so a broken or missing aiortc only disables
+        snapshots instead of the whole integration; it is never auto-installed
+        at runtime.
         """
         try:
             from aiortc import RTCPeerConnection, RTCSessionDescription
@@ -193,9 +192,8 @@ class RingIntercomCamera(Camera):
             _LOGGER.error(
                 "aiortc not available — server-side snapshot capture is "
                 "disabled (native WebRTC live streaming works without it). "
-                "aiortc 1.15.0 is incompatible with the PyAV shipped by Home "
-                "Assistant 2026.10+; snapshots will return once aiortc "
-                "supports av 19."
+                "Home Assistant 2026.10+ needs aiortc >= 1.16.0; check the "
+                "log for requirement installation errors."
             )
             return None
 
